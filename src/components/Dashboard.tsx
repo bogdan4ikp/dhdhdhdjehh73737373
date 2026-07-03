@@ -1,24 +1,22 @@
 import React, { useState } from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
-  Plus, Search, Lock, ShieldCheck, Settings, KeyRound, LogOut,
-  Folder, Calendar, FileText, Download, Upload, Trash2, LayoutGrid,
-  ChevronRight, ArrowRightLeft, Clock, ShieldAlert, Check, HelpCircle
+  Menu, Search, Home, FileText, User, Plus, 
+  MoreHorizontal, Star, Trash2, Folder, ShieldCheck, 
+  Settings, KeyRound, Download, Upload, LogOut, File,
+  ListTodo, X
 } from 'lucide-react';
 import { Document, UserSettings } from '../types';
-import { BUILT_IN_TEMPLATES } from '../utils/templates';
 
 interface DashboardProps {
   documents: Document[];
   userSettings: UserSettings;
   onUpdateSettings: (settings: UserSettings) => void;
   onSelectDoc: (doc: Document) => void;
-  onCreateDoc: (templateId?: string | null, customTemplateContent?: string | null) => void;
+  onCreateDoc: (templateId?: string | null, customTemplateContent?: string | null, customTitle?: string | null) => void;
   onDeleteDoc: (id: string) => void;
   onChangeMasterPassword: (oldPw: string, newPw: string) => Promise<boolean>;
   onLock: () => void;
-  onImportBackup: (payload: string) => boolean;
-  onExportBackup: () => void;
   isGuestMode?: boolean;
 }
 
@@ -31,56 +29,32 @@ export default function Dashboard({
   onDeleteDoc,
   onChangeMasterPassword,
   onLock,
-  onImportBackup,
-  onExportBackup,
   isGuestMode = false
 }: DashboardProps) {
-  // Query Filters & Searching
+  const [activeTab, setActiveTab] = useState<'home' | 'docs' | 'profile'>('home');
   const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('Все');
-  const [sortBy, setSortBy] = useState<'updated' | 'title' | 'words'>('updated');
-
-  // Master Settings UI state
-  const [showSettings, setShowSettings] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
+  
+  // Custom list builder states
+  const [showListBuilderModal, setShowListBuilderModal] = useState(false);
+  const [listBuilderTitle, setListBuilderTitle] = useState('');
+  const [listBuilderItems, setListBuilderItems] = useState<string[]>(['']);
+  
+  // Settings / Profile states
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState(false);
 
-  // Backup loading
-  const [backupPayload, setBackupPayload] = useState('');
-  const [backupError, setBackupError] = useState('');
-  const [backupSuccess, setBackupSuccess] = useState(false);
+  const regularDocs = documents.filter(d => !d.isTemplate).sort((a, b) => b.updatedAt - a.updatedAt);
+  const recentDocs = regularDocs.slice(0, 4);
 
-  // Categories list in Russian matching Document properties
-  const categories = ['Все', 'Работа', 'Личное', 'Черновик', 'Важное', 'Творчество', 'Шаблон'];
+  const filteredDocs = regularDocs.filter(doc => 
+    doc.title.toLowerCase().includes(search.toLowerCase()) || 
+    doc.content.toLowerCase().includes(search.toLowerCase())
+  );
 
-  // Handle document counts
-  const regularDocs = documents.filter(d => !d.isTemplate);
-  const customTemplates = documents.filter(d => d.isTemplate);
-
-  // Filter regular documents
-  const filteredDocs = regularDocs.filter(doc => {
-    const matchesSearch = doc.title.toLowerCase().includes(search.toLowerCase()) || 
-                          doc.content.toLowerCase().includes(search.toLowerCase());
-    
-    // Map category check
-    if (categoryFilter === 'Все') return matchesSearch;
-    return matchesSearch && doc.category === categoryFilter;
-  });
-
-  // Sort filtered regular documents
-  const sortedDocs = [...filteredDocs].sort((a, b) => {
-    if (sortBy === 'title') {
-      return a.title.localeCompare(b.title);
-    }
-    if (sortBy === 'words') {
-      return (b.wordCount || 0) - (a.wordCount || 0);
-    }
-    return b.updatedAt - a.updatedAt; // default to modified time descending
-  });
-
-  // Handle Master PW modification
   const handlePasswordUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     setPwError('');
@@ -97,515 +71,621 @@ export default function Dashboard({
       setPwSuccess(true);
       setOldPassword('');
       setNewPassword('');
-      // Reload page or let parent state update to reflect non-guest mode
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      setTimeout(() => window.location.reload(), 1000);
     } else {
       setPwError('Неверный текущий пароль. Не удалось обновить ключ.');
     }
   };
 
-  // Import JSON backup flow
-  const handleImport = (e: React.FormEvent) => {
-    e.preventDefault();
-    setBackupError('');
-    setBackupSuccess(false);
-
-    if (!backupPayload.trim()) {
-      setBackupError('Данные файла резервной копии пусты.');
-      return;
+  const formatTime = (ts: number) => {
+    const date = new Date(ts);
+    const now = new Date();
+    const isToday = date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+    
+    if (isToday) {
+      return `Изменено ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
     }
+    return `Изменено ${date.getDate()} ${['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'][date.getMonth()]}`;
+  };
 
-    const success = onImportBackup(backupPayload);
-    if (success) {
-      setBackupSuccess(true);
-      setBackupPayload('');
-    } else {
-      setBackupError('Ошибка импорта. Убедитесь, что формат файла соответствует структуре DocuVault.');
+  const handleAddListBuilderItem = () => {
+    setListBuilderItems([...listBuilderItems, '']);
+  };
+
+  const handleListBuilderItemChange = (index: number, value: string) => {
+    const updated = [...listBuilderItems];
+    updated[index] = value;
+    setListBuilderItems(updated);
+  };
+
+  const handleRemoveListBuilderItem = (index: number) => {
+    if (listBuilderItems.length > 1) {
+      setListBuilderItems(listBuilderItems.filter((_, i) => i !== index));
     }
   };
 
-  const handleBackupFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleCreateChecklistFromModal = () => {
+    const title = listBuilderTitle.trim() || (userSettings.language === 'en' ? 'My Checklist' : 'Новый список');
+    const itemsHtml = listBuilderItems
+      .map(item => item.trim())
+      .filter(item => item.length > 0)
+      .map(item => `
+        <div style="display: flex; align-items: center; gap: 12px; margin-top: 6px; margin-bottom: 6px;">
+          <input type="checkbox" style="width: 18px; height: 18px; accent-color: #3b82f6; cursor: pointer;">
+          &nbsp;<span style="font-size: 1.05rem;">${item}</span>
+        </div>
+      `).join('');
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      setBackupPayload(text);
-    };
-    reader.readAsText(file);
+    const fullContent = `
+      <div style="font-family: Inter, -apple-system, sans-serif; line-height: 1.6; color: #1e293b;">
+        <h2>${title}</h2>
+        <p style="color: #64748b; font-size: 0.9rem; margin-bottom: 1.5rem;">
+          ${userSettings.language === 'en' ? 'Click checkboxes to complete tasks.' : 'Нажмите на квадрат, чтобы отметить задачу как выполненную.'}
+        </p>
+        ${itemsHtml || `
+          <div style="display: flex; align-items: center; gap: 12px; margin-top: 6px; margin-bottom: 6px;">
+            <input type="checkbox" style="width: 18px; height: 18px; accent-color: #3b82f6; cursor: pointer;">
+            &nbsp;<span style="font-size: 1.05rem;">${userSettings.language === 'en' ? 'First task' : 'Первая задача'}</span>
+          </div>
+        `}
+        <div><br></div>
+      </div>
+    `;
+
+    onCreateDoc(null, fullContent, title);
+    setShowListBuilderModal(false);
+  };
+
+  // Helper for generating consistent colors for document icons
+  const getDocColor = (index: number) => {
+    const colors = ['text-blue-500 bg-blue-50', 'text-purple-500 bg-purple-50', 'text-green-500 bg-green-50', 'text-yellow-500 bg-yellow-50', 'text-orange-500 bg-orange-50'];
+    return colors[index % colors.length];
   };
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans select-none">
+    <div className="h-[100dvh] bg-[#F8FAFC] dark:bg-slate-900 flex flex-col font-sans select-none w-full relative overflow-hidden transition-colors duration-300">
       
-      {/* Top dashboard header bar */}
-      <header className="bg-white border-b border-slate-200 text-slate-900 px-4 sm:px-8 py-3 sm:py-4 flex items-center justify-between shadow-xs">
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-sm sm:text-base">
-            D
-          </div>
-          <div>
-            <h1 className="text-base sm:text-lg font-bold tracking-tight text-slate-900 leading-none sm:leading-normal">
-              Docu<span className="text-indigo-600 font-bold">Vault</span>
-            </h1>
-            <p className="hidden sm:block text-slate-400 text-[10px] uppercase font-bold tracking-wider mt-0.5">
-              Безопасный центр документов
-            </p>
-          </div>
-        </div>
-
-        {/* Header Action Menu */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          <button
-            id="btn-nav-settings"
-            onClick={() => setShowSettings(!showSettings)}
-            className={`p-2 sm:px-4 sm:py-2 border rounded-lg transition cursor-pointer flex items-center gap-1.5 text-xs font-semibold ${
-              showSettings 
-                ? 'bg-indigo-50 border-indigo-200 text-indigo-700' 
-                : 'border-slate-200 hover:bg-slate-50 text-slate-600'
-            }`}
-            title="Настройки хранилища"
-          >
-            <Settings className="w-4 h-4" />
-            <span className="hidden sm:inline">Настройки</span>
-          </button>
-
-          {!isGuestMode && (
-            <button
-              id="btn-nav-lock"
-              onClick={onLock}
-              className="p-2 sm:px-4 sm:py-2 bg-white hover:bg-red-50 hover:text-red-600 border border-slate-200 text-slate-600 rounded-lg transition cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
-              title="Заблокировать хранилище"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Выйти</span>
-            </button>
-          )}
-        </div>
+      {/* App Header */}
+      <header className="px-6 py-5 flex items-center justify-between bg-[#F8FAFC] dark:bg-slate-900 sticky top-0 z-10 transition-colors duration-300">
+        <button onClick={() => setIsDrawerOpen(true)} className="text-slate-700 dark:text-slate-200 p-1 -ml-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition cursor-pointer">
+          <Menu className="w-6 h-6" />
+        </button>
+        <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">PSWord</h1>
+        <button 
+          onClick={() => setActiveTab('docs')}
+          className="text-slate-700 dark:text-slate-200 p-1 -mr-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition cursor-pointer"
+        >
+          <Search className="w-6 h-6" />
+        </button>
       </header>
 
-      {/* Guest Mode Informational Banner */}
-      {isGuestMode && (
-        <div className="bg-indigo-50 border-b border-indigo-100 px-4 sm:px-8 py-3 text-indigo-800 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 max-w-7xl mx-auto w-full mt-2 sm:mt-4 rounded-lg shadow-xxs">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-indigo-600 flex-shrink-0" />
-            <span>
-              <strong>Гостевой режим без регистрации активен.</strong> Все ваши проекты хранятся локально на этом устройстве. Вы можете свободно создавать, редактировать, скачивать и импортировать файлы!
-            </span>
-          </div>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="text-indigo-600 hover:text-indigo-800 font-bold underline text-left cursor-pointer"
-          >
-            Установить пароль защиты
-          </button>
-        </div>
-      )}
-
-      {/* Settings Overlay Sidebar */}
-      {showSettings && (
-        <div className="bg-white border-b border-slate-200 text-slate-800 p-6 shadow-sm animate-in fade-in slide-in-from-top duration-200">
-          <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
-            
-            {/* AutoLock Timeout Settings */}
-            <div className="space-y-4">
-              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
-                <Clock className="w-4 h-4 text-indigo-600" />
-                Таймер автоблокировки
-              </h3>
-              <p className="text-slate-500 text-xxs leading-relaxed">
-                Автоматически блокирует панель управления и удаляет расшифрованные данные из временной памяти при отсутствии активности.
-              </p>
-              <div>
-                <label className="text-xxs font-bold text-slate-400 block mb-1">ВРЕМЯ БЛОКИРОВКИ</label>
-                <select
-                  value={userSettings.autoLockMinutes}
-                  onChange={e => onUpdateSettings({ ...userSettings, autoLockMinutes: parseInt(e.target.value) })}
-                  className="w-full bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-xs focus:outline-none focus:border-indigo-500 cursor-pointer"
-                  disabled={isGuestMode}
-                >
-                  {isGuestMode ? (
-                    <option>Отключено в гостевом режиме</option>
-                  ) : (
-                    <>
-                      <option value={0}>Отключено (никогда не блокировать)</option>
-                      <option value={1}>1 минута</option>
-                      <option value={5}>5 минут</option>
-                      <option value={10}>10 минут</option>
-                      <option value={15}>15 минут</option>
-                      <option value={30}>30 минут</option>
-                    </>
-                  )}
-                </select>
-                {isGuestMode && (
-                  <p className="text-[10px] text-amber-600 mt-1">Установите мастер-пароль, чтобы активировать автоблокировку.</p>
-                )}
-              </div>
-            </div>
-
-            {/* Change Master Password */}
-            <div className="space-y-4">
-              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
-                <KeyRound className="w-4 h-4 text-indigo-600" />
-                {isGuestMode ? 'Установить мастер-пароль' : 'Изменить мастер-пароль'}
-              </h3>
-              <form onSubmit={handlePasswordUpdate} className="space-y-3">
-                <p className="text-slate-500 text-xxs leading-relaxed">
-                  {isGuestMode 
-                    ? 'Защитите свои локальные проекты шифрованием AES-GCM 256 бит, установив надежный мастер-пароль.'
-                    : 'Изменение основного пароля приведет к полной перешифровке всех сохраненных локально документов.'
-                  }
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {!isGuestMode && (
-                    <div>
-                      <label className="text-xxs font-bold text-slate-400 block mb-1">ТЕКУЩИЙ ПАРОЛЬ</label>
-                      <input
-                        type="password"
-                        value={oldPassword}
-                        onChange={e => setOldPassword(e.target.value)}
-                        className="w-full bg-white border border-slate-200 text-slate-800 px-3 py-1.5 rounded-lg text-xs focus:outline-none focus:border-indigo-500"
-                        required
-                      />
-                    </div>
-                  )}
-                  <div className={isGuestMode ? 'col-span-2' : ''}>
-                    <label className="text-xxs font-bold text-slate-400 block mb-1">НОВЫЙ МАСТЕР-ПАРОЛЬ</label>
-                    <input
-                      type="password"
-                      value={newPassword}
-                      onChange={e => setNewPassword(e.target.value)}
-                      placeholder="Минимум 4 символа"
-                      className="w-full bg-white border border-slate-200 text-slate-800 px-3 py-1.5 rounded-lg text-xs focus:outline-none focus:border-indigo-500"
-                      required
-                    />
-                  </div>
-                </div>
-
-                {pwError && <div className="text-xxs text-red-600 font-semibold">{pwError}</div>}
-                {pwSuccess && (
-                  <div className="text-xxs text-green-600 font-semibold flex items-center gap-1">
-                    <Check className="w-3.5 h-3.5 text-green-600" /> Пароль успешно установлен! Перезагрузка...
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 font-semibold text-white text-xs rounded-lg transition cursor-pointer"
-                >
-                  {isGuestMode ? 'Защитить хранилище' : 'Обновить мастер-пароль'}
-                </button>
-              </form>
-            </div>
-
-            {/* Bulk Backup / JSON Restoration */}
-            <div className="space-y-4">
-              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
-                <ArrowRightLeft className="w-4 h-4 text-indigo-600" />
-                Импорт и экспорт данных
-              </h3>
-              <p className="text-slate-500 text-xxs leading-relaxed">
-                Выгрузите все свои документы в файл JSON для резервного копирования или загрузите ранее сохраненный файл для восстановления.
-              </p>
-              <div className="flex gap-2">
-                <button
-                  id="btn-export-backup"
-                  onClick={onExportBackup}
-                  className="flex-1 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1 cursor-pointer shadow-xxs"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Экспорт в JSON
-                </button>
-                <div className="flex-1 relative">
-                  <input
-                    type="file"
-                    accept=".json"
-                    onChange={handleBackupFileSelect}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  />
-                  <button className="w-full h-full py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1 cursor-pointer shadow-xxs">
-                    <Upload className="w-3.5 h-3.5" />
-                    Импорт JSON
-                  </button>
-                </div>
-              </div>
-
-              {backupPayload && (
-                <form onSubmit={handleImport} className="space-y-2 pt-2 border-t border-slate-200">
-                  <p className="text-[9px] text-indigo-600 font-bold">ОБНАРУЖЕНЫ ДАННЫЕ ДЛЯ ИМПОРТА</p>
-                  <button
-                    type="submit"
-                    className="w-full py-1.5 bg-green-600 hover:bg-green-500 font-bold text-white text-xxs rounded-lg transition"
-                  >
-                    Подтвердить и восстановить проекты
-                  </button>
-                  {backupError && <div className="text-xxs text-red-600 font-semibold">{backupError}</div>}
-                  {backupSuccess && (
-                    <div className="text-xxs text-green-600 font-semibold flex items-center gap-1">
-                      <Check className="w-3.5 h-3.5" /> Восстановление выполнено успешно!
-                    </div>
-                  )}
-                </form>
-              )}
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* Main Container */}
-      <main className="flex-grow max-w-7xl w-full mx-auto p-4 sm:p-8 space-y-6 sm:space-y-8 overflow-y-auto overflow-x-hidden">
-
-        {/* 1. Pre-formatted Document Templates Row */}
-        <section className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0">
-            <div>
-              <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <LayoutGrid className="w-4 h-4 text-slate-400" />
-                Быстрый старт из шаблонов
-              </h2>
-              <p className="text-slate-500 text-xs mt-0.5">
-                Начните писать мгновенно, выбрав один из готовых профессиональных макетов.
-              </p>
-            </div>
-            <button
-              id="btn-create-blank-doc"
-              onClick={() => onCreateDoc(null)}
-              className="w-full sm:w-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold text-xs rounded-lg transition flex items-center justify-center sm:justify-start gap-1.5 shadow-xs cursor-pointer"
+      {/* Drawer */}
+      <AnimatePresence>
+        {isDrawerOpen && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsDrawerOpen(false)}
+              className="absolute inset-0 z-40 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="absolute inset-y-0 left-0 w-[280px] bg-white dark:bg-slate-900 shadow-2xl z-50 flex flex-col"
             >
-              <Plus className="w-4 h-4" />
-              Пустой документ
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-            {BUILT_IN_TEMPLATES.map(tpl => {
-              // Map template categories to Russian
-              const catLabel = tpl.category === 'Business' ? 'Бизнес' :
-                               tpl.category === 'Academic' ? 'Академия' :
-                               tpl.category === 'Creative' ? 'Творчество' : 'Общие';
-              return (
-                <motion.button
-                  key={tpl.id}
-                  whileHover={{ y: -3, scale: 1.01 }}
-                  onClick={() => onCreateDoc(tpl.id)}
-                  className="bg-white border border-slate-200 p-3 sm:p-4 rounded-lg shadow-xs text-left hover:shadow-sm transition cursor-pointer flex flex-col justify-between h-32 sm:h-40 group relative overflow-hidden"
+              <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="font-bold text-lg text-slate-900 dark:text-white">PSWord</span>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
+                <button 
+                  onClick={() => { setActiveTab('home'); setIsDrawerOpen(false); }}
+                  className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition cursor-pointer ${activeTab === 'home' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                 >
-                  <div className="absolute right-0 top-0 w-20 sm:w-24 h-20 sm:h-24 bg-gradient-to-br from-indigo-500/5 to-transparent rounded-bl-full" />
-                  <div>
-                    <span className="text-[9px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md font-bold uppercase tracking-wider">
-                      {catLabel}
-                    </span>
-                    <h3 className="text-xs font-bold text-slate-800 mt-2 sm:mt-2.5 group-hover:text-indigo-600 transition truncate">
-                      {tpl.name}
-                    </h3>
-                    <p className="text-slate-400 text-xxs mt-1 line-clamp-2 sm:line-clamp-3 leading-relaxed">
-                      {tpl.description}
-                    </p>
-                  </div>
-                  <div className="text-[10px] text-indigo-600 font-bold flex items-center gap-1 group-hover:translate-x-1 transition mt-1 sm:mt-2">
-                    Создать
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </div>
-                </motion.button>
-              );
-            })}
-          </div>
-        </section>
+                  <Home className="w-5 h-5" /> {userSettings.language === 'en' ? 'Home' : 'Главная'}
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('docs'); setIsDrawerOpen(false); }}
+                  className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition cursor-pointer ${activeTab === 'docs' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                >
+                  <FileText className="w-5 h-5" /> {userSettings.language === 'en' ? 'All documents' : 'Все документы'}
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('profile'); setIsDrawerOpen(false); }}
+                  className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition cursor-pointer ${activeTab === 'profile' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                >
+                  <Settings className="w-5 h-5" /> {userSettings.language === 'en' ? 'Settings' : 'Настройки'}
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
-        {/* 2. Custom Templates Repository (if any) */}
-        {customTemplates.length > 0 && (
-          <section className="space-y-4">
-            <div>
-              <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Folder className="w-4 h-4 text-slate-400" />
-                Мои сохраненные шаблоны
-              </h2>
-              <p className="text-slate-500 text-xs mt-0.5">
-                Собственные макеты оформления, сохраненные для повторного использования.
-              </p>
-            </div>
+      {/* Main Content Area */}
+      <main className="flex-1 overflow-y-auto px-6 pb-6 no-scrollbar">
+        
+        {activeTab === 'home' && (
+          <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="space-y-8">
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-              {customTemplates.map(tpl => (
-                <motion.div
-                  key={tpl.id}
-                  whileHover={{ y: -2 }}
-                  className="bg-indigo-50/40 border border-indigo-100 p-4 rounded-lg shadow-xs flex flex-col justify-between h-36 group relative"
+            {/* Recent Section */}
+            <section>
+              <div className="flex justify-between items-end mb-4">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                  {userSettings.language === 'en' ? 'Recent' : 'Недавние'}
+                </h2>
+                <button 
+                  onClick={() => setActiveTab('docs')}
+                  className="text-sm font-medium text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition flex items-center gap-1 cursor-pointer"
                 >
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 truncate">
-                      {tpl.title}
-                    </h3>
-                    <p className="text-slate-400 text-xxs mt-1">
-                      Создан: {new Date(tpl.createdAt).toLocaleDateString()}
-                    </p>
+                  {userSettings.language === 'en' ? 'All' : 'Все'} <span className="text-lg leading-none mb-0.5">›</span>
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {recentDocs.length === 0 ? (
+                  <div className="text-center py-8 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm text-slate-400 dark:text-slate-500 text-sm transition-colors duration-300">
+                    {userSettings.language === 'en' ? 'List is empty' : 'Список пуст'}
                   </div>
-                  <div className="flex gap-2 justify-between items-center mt-4">
-                    <button
-                      onClick={() => onCreateDoc(null, tpl.content)}
-                      className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded-md cursor-pointer"
-                    >
-                      Использовать
-                    </button>
-                    <button
-                      onClick={() => onDeleteDoc(tpl.id)}
-                      className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-md cursor-pointer"
-                      title="Удалить пользовательский шаблон"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </section>
+                ) : (
+                  recentDocs.map((doc, idx) => {
+                    const colorClass = getDocColor(idx);
+                    const [textColor, bgColor] = colorClass.split(' ');
+                    // Replace light bg colors with dark variants for dark mode compatibility if needed
+                    const darkBgColor = bgColor.replace('50', '900/30');
+                    return (
+                      <motion.div
+                        key={doc.id}
+                        whileHover={{ scale: 1.01 }}
+                        onClick={() => onSelectDoc(doc)}
+                        className="bg-white dark:bg-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-[0_2px_8px_rgb(0,0,0,0.04)] border border-slate-50 dark:border-slate-700 cursor-pointer transition-colors duration-300"
+                      >
+                        <div className="flex items-center gap-4 truncate">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${bgColor} dark:${darkBgColor} ${textColor} dark:text-${textColor.split('-')[1]}-400`}>
+                            <File className="w-5 h-5 fill-current opacity-20 absolute" />
+                            <File className="w-5 h-5 relative z-10" />
+                          </div>
+                          <div className="truncate">
+                            <h3 className="font-bold text-slate-900 dark:text-white text-[15px] truncate">{doc.title || (userSettings.language === 'en' ? 'Untitled' : 'Безымянный')}</h3>
+                            <p className="text-slate-400 dark:text-slate-500 text-xs mt-0.5">{formatTime(doc.updatedAt)}</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); onDeleteDoc(doc.id); }}
+                          className="text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 p-2 cursor-pointer transition-colors"
+                          title={userSettings.language === 'en' ? 'Delete' : 'Удалить'}
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </motion.div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+
+            {/* Categories Section */}
+            <section>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">
+                {userSettings.language === 'en' ? 'Categories' : 'Категории'}
+              </h2>
+              <div className="grid grid-cols-2 gap-3">
+                
+                <div onClick={() => setActiveTab('docs')} className="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] border border-slate-50 dark:border-slate-700 cursor-pointer hover:shadow-md transition-all duration-300">
+                  <FileText className="w-6 h-6 text-blue-500 mb-3" />
+                  <h3 className="font-bold text-slate-900 dark:text-white text-sm">{userSettings.language === 'en' ? 'All docs' : 'Все документы'}</h3>
+                  <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">{regularDocs.length}</p>
+                </div>
+
+                <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] border border-slate-50 dark:border-slate-700 cursor-pointer hover:shadow-md transition-all duration-300">
+                  <Trash2 className="w-6 h-6 text-green-500 mb-3" />
+                  <h3 className="font-bold text-slate-900 dark:text-white text-sm">{userSettings.language === 'en' ? 'Trash' : 'Корзина'}</h3>
+                  <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">0</p>
+                </div>
+
+              </div>
+            </section>
+          </motion.div>
         )}
 
-        {/* 3. Search and Primary Files Dashboard Grid */}
-        <section className="space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <FileText className="w-4 h-4 text-slate-400" />
-                История проектов и документов ({filteredDocs.length})
-              </h2>
-              <p className="text-slate-500 text-xs mt-0.5">
-                {isGuestMode 
-                  ? 'Все ваши файлы хранятся в безопасности локально в браузере.'
-                  : 'Документы зашифрованы персональным 256-битным мастер-ключом.'
-                }
-              </p>
+        {activeTab === 'docs' && (
+          <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
+              {userSettings.language === 'en' ? 'All documents' : 'Все документы'}
+            </h2>
+            
+            <div className="relative mb-6">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 dark:text-slate-500" />
+              <input 
+                type="text" 
+                placeholder={userSettings.language === 'en' ? 'Search documents...' : 'Поиск документов...'}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-3 pl-12 pr-4 text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400 transition shadow-sm"
+              />
             </div>
 
-            {/* Filters Bar */}
-            <div className="flex flex-col sm:flex-row flex-wrap sm:items-center gap-2 bg-slate-100 border border-slate-200 p-2 sm:p-1 rounded-lg w-full">
-              <select
-                value={sortBy}
-                onChange={e => setSortBy(e.target.value as any)}
-                className="bg-white text-slate-600 text-xs font-semibold px-2 py-1 rounded-md border border-slate-200/50 focus:outline-none focus:ring-0 cursor-pointer shadow-xs w-full sm:w-auto"
-              >
-                <option value="updated">⏰ По изменению</option>
-                <option value="title">🔤 По алфавиту</option>
-                <option value="words">📏 По числу слов</option>
-              </select>
+            <div className="space-y-3">
+              {filteredDocs.length === 0 ? (
+                <div className="text-center py-12 text-slate-400 dark:text-slate-500 text-sm">
+                  {userSettings.language === 'en' ? 'Nothing found' : 'Ничего не найдено'}
+                </div>
+              ) : (
+                filteredDocs.map((doc, idx) => {
+                  const colorClass = getDocColor(idx);
+                  const [textColor, bgColor] = colorClass.split(' ');
+                  const darkBgColor = bgColor.replace('50', '900/30');
+                  return (
+                    <motion.div
+                      key={doc.id}
+                      whileHover={{ scale: 1.01 }}
+                      onClick={() => onSelectDoc(doc)}
+                      className="bg-white dark:bg-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-[0_2px_8px_rgb(0,0,0,0.04)] border border-slate-50 dark:border-slate-700 cursor-pointer transition-colors duration-300"
+                    >
+                      <div className="flex items-center gap-4 truncate">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${bgColor} dark:${darkBgColor} ${textColor} dark:text-${textColor.split('-')[1]}-400`}>
+                          <FileText className="w-5 h-5" />
+                        </div>
+                        <div className="truncate">
+                          <h3 className="font-bold text-slate-900 dark:text-white text-[15px] truncate">{doc.title || (userSettings.language === 'en' ? 'Untitled' : 'Безымянный')}</h3>
+                          <p className="text-slate-400 dark:text-slate-500 text-xs mt-0.5">{formatTime(doc.updatedAt)}</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); onDeleteDoc(doc.id); }}
+                        className="text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 p-2 transition cursor-pointer"
+                        title={userSettings.language === 'en' ? 'Delete' : 'Удалить'}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </motion.div>
+                  );
+                })
+              )}
+            </div>
+          </motion.div>
+        )}
 
-              <div className="hidden sm:block w-px h-4 bg-slate-200" />
+        {activeTab === 'profile' && (
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6">
+              {userSettings.language === 'en' ? 'Profile & Settings' : 'Профиль и Настройки'}
+            </h2>
+            
+            {isGuestMode && (
+              <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-100 dark:border-blue-800/50 p-4 rounded-2xl text-blue-800 dark:text-blue-300 text-xs flex gap-3 shadow-sm mb-6">
+                <ShieldCheck className="w-5 h-5 flex-shrink-0 text-blue-600 dark:text-blue-400 mt-0.5" />
+                <p>{userSettings.language === 'en' ? 'You are using guest mode. Your data is stored locally without a password.' : 'Вы используете гостевой режим. Ваши данные хранятся локально без пароля.'}</p>
+              </div>
+            )}
 
-              <div className="flex gap-1 overflow-x-auto pb-1 sm:pb-0 no-scrollbar w-full sm:w-auto flex-nowrap sm:flex-wrap">
-                {categories.map(cat => (
-                  <button
-                    key={cat}
-                    onClick={() => setCategoryFilter(cat)}
-                    className={`px-3 py-1 text-xxs font-bold rounded-md transition cursor-pointer whitespace-nowrap flex-shrink-0 ${
-                      categoryFilter === cat 
-                        ? 'bg-indigo-600 text-white shadow-xs' 
-                        : 'text-slate-600 hover:bg-white'
-                    }`}
-                  >
-                    {cat}
+            {!isGuestMode && (
+              <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
+                <h3 className="font-bold text-slate-900 dark:text-white text-sm mb-4 flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-slate-400 dark:text-slate-500" />
+                  {userSettings.language === 'en' ? 'Set new master password' : 'Установить новый мастер-пароль'}
+                </h3>
+                <form onSubmit={handlePasswordUpdate} className="space-y-3">
+                  <input
+                    type="password"
+                    placeholder={userSettings.language === 'en' ? 'Current password' : 'Текущий пароль'}
+                    value={oldPassword}
+                    onChange={e => setOldPassword(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 dark:focus:border-blue-400"
+                    required
+                  />
+                  <input
+                    type="password"
+                    placeholder={userSettings.language === 'en' ? 'New password' : 'Новый пароль'}
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 dark:focus:border-blue-400"
+                    required
+                  />
+                  {pwError && <p className="text-red-500 dark:text-red-400 text-xs">{pwError}</p>}
+                  {pwSuccess && <p className="text-green-600 dark:text-green-400 text-xs">{userSettings.language === 'en' ? 'Password updated successfully!' : 'Пароль успешно обновлен!'}</p>}
+                  <button type="submit" className="w-full py-2 bg-slate-900 dark:bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-slate-800 dark:hover:bg-blue-700 transition cursor-pointer">
+                    {userSettings.language === 'en' ? 'Update encryption key' : 'Обновить ключ шифрования'}
                   </button>
-                ))}
+                </form>
               </div>
-            </div>
-          </div>
+            )}
 
-          {/* Search container */}
-          <div className="relative">
-            <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
-              <Search className="w-4 h-4" />
-            </span>
-            <input
-              id="dashboard-search-input"
-              type="text"
-              placeholder="Поиск по названию, тегам категорий или текстовому содержанию документов..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-lg focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs sm:text-sm shadow-xs transition"
-            />
-          </div>
-
-          {/* Documents Main List */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
-            {/* Prominent Create New Document Card inside the history */}
-            <motion.div
-              whileHover={{ y: -3, boxShadow: '0 8px 20px -4px rgba(0,0,0,0.05)' }}
-              onClick={() => onCreateDoc(null)}
-              className="bg-indigo-50/50 border border-indigo-200 border-dashed rounded-lg p-5 shadow-xs text-center flex flex-col items-center justify-center h-52 hover:bg-indigo-50 hover:border-indigo-300 transition cursor-pointer group"
-            >
-              <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-                <Plus className="w-6 h-6" />
-              </div>
-              <h3 className="text-sm font-bold text-indigo-900 mt-2">
-                Создать новый проект
+            <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 space-y-4">
+              <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
+                {userSettings.language === 'en' ? 'Appearance and language' : 'Внешний вид и язык'}
               </h3>
-              <p className="text-indigo-600/70 text-xs mt-1 px-4 leading-relaxed">
-                Начните с чистого листа
-              </p>
-            </motion.div>
-
-            {sortedDocs.map(doc => (
-              <motion.div
-                key={doc.id}
-                whileHover={{ y: -3, boxShadow: '0 8px 20px -4px rgba(0,0,0,0.05)' }}
-                onClick={() => onSelectDoc(doc)}
-                className="bg-white border border-slate-200 rounded-lg p-5 shadow-xs text-left flex flex-col justify-between h-52 hover:border-indigo-200 transition cursor-pointer group"
-              >
-                  <div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`text-[9px] px-2 py-0.5 rounded-md font-bold uppercase tracking-wider ${
-                        doc.category === 'Работа' ? 'bg-blue-50 text-blue-700' :
-                        doc.category === 'Личное' ? 'bg-green-50 text-green-700' :
-                        doc.category === 'Важное' ? 'bg-amber-50 text-amber-700' :
-                        doc.category === 'Творчество' ? 'bg-purple-50 text-purple-700' :
-                        doc.category === 'Шаблон' ? 'bg-rose-50 text-rose-700' :
-                        'bg-slate-100 text-slate-500'
-                      }`}>
-                        {doc.category}
-                      </span>
-
-                      {/* Display lock status */}
-                      {doc.isLocked && (
-                        <span className="p-1 bg-red-50 text-red-600 rounded-md" title="Защищено PIN-кодом">
-                          <Lock className="w-3.5 h-3.5" />
-                        </span>
-                      )}
-                    </div>
-
-                    <h3 className="text-sm font-bold text-slate-800 mt-3.5 group-hover:text-indigo-600 transition truncate">
-                      {doc.title || 'Безымянный документ'}
-                    </h3>
-
-                    {/* Preview first lines */}
-                    <p className="text-slate-400 text-xxs mt-2 line-clamp-3 leading-relaxed">
-                      {doc.content.replace(/<[^>]+>/g, '').trim() || 'Пустой черновик.'}
-                    </p>
-                  </div>
-
-                  <div className="border-t border-slate-100 pt-3 flex items-center justify-between text-[10px] text-slate-400 mt-4">
-                    <span className="flex items-center gap-1">
-                      <Calendar className="w-3.5 h-3.5" />
-                      {new Date(doc.updatedAt).toLocaleDateString()}
-                    </span>
-                    <span className="font-mono bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md font-bold text-slate-500">
-                      Слов: {doc.wordCount || 0}
-                    </span>
-                  </div>
-                </motion.div>
-              ))}
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                  {userSettings.language === 'en' ? 'Dark theme' : 'Тёмная тема'}
+                </span>
+                <button
+                  onClick={() => onUpdateSettings({ ...userSettings, theme: userSettings.theme === 'dark' ? 'light' : 'dark' })}
+                  className={`w-12 h-7 rounded-full p-1 transition-colors cursor-pointer flex items-center ${userSettings.theme === 'dark' ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}
+                >
+                  <motion.div
+                    layout
+                    className="w-5 h-5 bg-white rounded-full shadow-sm"
+                    initial={false}
+                    animate={{
+                      x: userSettings.theme === 'dark' ? 20 : 0
+                    }}
+                  />
+                </button>
+              </div>
+              <div className="h-px bg-slate-100 dark:bg-slate-700 w-full my-2"></div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                  {userSettings.language === 'en' ? 'Interface language' : 'Язык интерфейса'}
+                </span>
+                <button
+                  onClick={() => onUpdateSettings({ ...userSettings, language: userSettings.language === 'en' ? 'ru' : 'en' })}
+                  className="text-sm font-bold text-blue-600 dark:text-blue-400 cursor-pointer hover:text-blue-700 dark:hover:text-blue-300 bg-blue-50 dark:bg-blue-900/30 px-3 py-1 rounded-lg transition"
+                >
+                  {userSettings.language === 'en' ? 'English' : 'Русский'}
+                </button>
+              </div>
             </div>
-        </section>
+
+            <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 space-y-4 mt-8">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-slate-900 dark:text-white">
+                  {userSettings.language === 'en' ? 'App version' : 'Версия приложения'}
+                </span>
+                <span className="text-sm font-medium text-slate-500">1.0.1</span>
+              </div>
+              <div className="h-px bg-slate-100 dark:bg-slate-700 w-full my-2"></div>
+              <a href="https://files.manuscdn.com/user_upload_by_module/session_file/310519663706234669/AGnaMHeKkVobgxQg.pdf" target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline block">
+                {userSettings.language === 'en' ? 'Terms of Use' : 'Условия использования'}
+              </a>
+              <a href="https://files.manuscdn.com/user_upload_by_module/session_file/310519663706234669/RDbCvevzPWsgdcwe.pdf" target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline block">
+                {userSettings.language === 'en' ? 'Privacy Policy' : 'Политика конфиденциальности'}
+              </a>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 space-y-4 mt-8">
+              <h3 className="font-bold text-red-600 dark:text-red-400 text-sm">
+                {userSettings.language === 'en' ? 'Danger Zone' : 'Опасная зона'}
+              </h3>
+              <p className="text-xs text-slate-400 dark:text-slate-500">
+                {userSettings.language === 'en' ? 'Permanently delete all stored files and start fresh.' : 'Навсегда удалите все сохраненные файлы и начните с чистого листа.'}
+              </p>
+              <button
+                onClick={() => {
+                  if (confirm(userSettings.language === 'en' ? 'Are you sure you want to delete ALL documents? This cannot be undone.' : 'Вы уверены, что хотите удалить ВСЕ документы? Это действие необратимо.')) {
+                    documents.forEach(doc => onDeleteDoc(doc.id));
+                  }
+                }}
+                className="w-full py-2 bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 rounded-lg text-sm font-semibold hover:bg-red-100 dark:hover:bg-red-950/50 transition cursor-pointer"
+              >
+                {userSettings.language === 'en' ? 'Delete all documents' : 'Удалить все документы'}
+              </button>
+            </div>
+
+            {!isGuestMode && (
+              <button
+                onClick={onLock}
+                className="w-full py-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl text-sm font-bold hover:bg-red-100 dark:hover:bg-red-900/40 transition flex justify-center items-center gap-2 mt-8 cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                {userSettings.language === 'en' ? 'Logout and lock' : 'Выйти и заблокировать'}
+              </button>
+            )}
+
+          </motion.div>
+        )}
 
       </main>
 
-      {/* Styled simple footer */}
-      <footer className="bg-white border-t border-slate-200 text-slate-400 text-xxs py-6 text-center mt-auto">
-        <p>🔒 Криптографическое хранилище AES-GCM 256 бит &bull; Хранение только на стороне клиента. Экспортируйте ваши резервные копии в Настройках.</p>
-      </footer>
+      {/* Floating Action Menu & Button (only on Home/Docs) */}
+      {(activeTab === 'home' || activeTab === 'docs') && (
+        <div className="absolute bottom-20 right-6 z-40 flex flex-col items-end gap-3">
+          <AnimatePresence>
+            {showCreateMenu && (
+              <>
+                {/* Backdrop to close the menu */}
+                <div 
+                  onClick={() => setShowCreateMenu(false)}
+                  className="fixed inset-0 bg-transparent z-10"
+                />
+                
+                {/* Menu items */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 15, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 15, scale: 0.95 }}
+                  className="flex flex-col gap-2 bg-white dark:bg-slate-800 p-2.5 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-700/60 z-20 min-w-[180px]"
+                >
+                  <button
+                    onClick={() => {
+                      setShowCreateMenu(false);
+                      onCreateDoc(null);
+                    }}
+                    className="flex items-center justify-between gap-3 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-xl transition cursor-pointer"
+                  >
+                    <span className="font-semibold">{userSettings.language === 'en' ? 'New document' : 'Новый документ'}</span>
+                    <FileText className="w-5 h-5 text-blue-500" />
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      setShowCreateMenu(false);
+                      setListBuilderTitle('');
+                      setListBuilderItems(['']);
+                      setShowListBuilderModal(true);
+                    }}
+                    className="flex items-center justify-between gap-3 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-xl transition cursor-pointer"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="bg-emerald-500 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full uppercase tracking-wider animate-pulse shrink-0">
+                        {userSettings.language === 'en' ? 'NEW' : 'НОВОЕ'}
+                      </span>
+                      <span className="font-semibold">{userSettings.language === 'en' ? 'New list' : 'Новый список'}</span>
+                    </div>
+                    <ListTodo className="w-5 h-5 text-emerald-500" />
+                  </button>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
 
+          <button
+            onClick={() => setShowCreateMenu(!showCreateMenu)}
+            className={`w-14 h-14 bg-[#3B82F6] text-white rounded-full flex items-center justify-center shadow-[0_8px_16px_rgb(59,130,246,0.3)] transition-transform cursor-pointer z-30 ${showCreateMenu ? 'rotate-45 scale-105' : 'hover:scale-105 active:scale-95'}`}
+          >
+            <Plus className="w-7 h-7" />
+          </button>
+        </div>
+      )}
+
+      {/* Bottom Navigation */}
+      <nav 
+        className="bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-4 pt-2 flex justify-around items-center z-30 shadow-[0_-4px_20px_rgb(0,0,0,0.02)] shrink-0 w-full relative transition-colors duration-300"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
+      >
+        <button 
+          onClick={() => setActiveTab('home')}
+          className={`flex flex-col items-center gap-1 flex-1 p-2 transition cursor-pointer ${activeTab === 'home' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'}`}
+        >
+          <Home className={`w-6 h-6 ${activeTab === 'home' ? 'fill-blue-600/20 dark:fill-blue-400/20' : ''}`} />
+          <span className="text-[10px] font-semibold">{userSettings.language === 'en' ? 'Home' : 'Главная'}</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('docs')}
+          className={`flex flex-col items-center gap-1 flex-1 p-2 transition cursor-pointer ${activeTab === 'docs' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'}`}
+        >
+          <FileText className={`w-6 h-6 ${activeTab === 'docs' ? 'fill-blue-600/20 dark:fill-blue-400/20' : ''}`} />
+          <span className="text-[10px] font-semibold">{userSettings.language === 'en' ? 'Docs' : 'Документы'}</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('profile')}
+          className={`flex flex-col items-center gap-1 flex-1 p-2 transition cursor-pointer ${activeTab === 'profile' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'}`}
+        >
+          <User className={`w-6 h-6 ${activeTab === 'profile' ? 'fill-blue-600/20 dark:fill-blue-400/20' : ''}`} />
+          <span className="text-[10px] font-semibold">{userSettings.language === 'en' ? 'Profile' : 'Профиль'}</span>
+        </button>
+      </nav>
+
+      {/* Interactive List Builder Modal */}
+      <AnimatePresence>
+        {showListBuilderModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-slate-800 w-full max-w-md rounded-3xl p-6 shadow-2xl border border-slate-100 dark:border-slate-700/60 my-8"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 dark:border-slate-700/50">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 text-emerald-500">
+                    <ListTodo className="w-5 h-5" />
+                  </div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-lg">
+                    {userSettings.language === 'en' ? 'Create Custom List' : 'Создание нового списка'}
+                  </h3>
+                </div>
+                <button 
+                  onClick={() => setShowListBuilderModal(false)}
+                  className="text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 p-1.5 rounded-full transition cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* List Title Input */}
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">
+                  {userSettings.language === 'en' ? 'List Name' : 'Название списка'}
+                </label>
+                <input
+                  type="text"
+                  value={listBuilderTitle}
+                  onChange={(e) => setListBuilderTitle(e.target.value)}
+                  placeholder={userSettings.language === 'en' ? 'e.g. Weekly Groceries' : 'например, Список покупок'}
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900/40 text-slate-800 dark:text-slate-100 rounded-xl border border-slate-100 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition text-sm font-semibold"
+                />
+              </div>
+
+              {/* Items Container with scroll */}
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">
+                  {userSettings.language === 'en' ? 'List Items' : 'Элементы списка'}
+                </label>
+                
+                <div className="space-y-2 max-h-[30vh] overflow-y-auto pr-1">
+                  {listBuilderItems.map((item, index) => (
+                    <motion.div 
+                      key={index} 
+                      layout
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex items-center gap-2"
+                    >
+                      <div className="w-5 h-5 rounded border-2 border-slate-300 dark:border-slate-600 flex-shrink-0 flex items-center justify-center text-xs text-slate-300">
+                        {index + 1}
+                      </div>
+                      <input
+                        type="text"
+                        value={item}
+                        onChange={(e) => handleListBuilderItemChange(index, e.target.value)}
+                        placeholder={userSettings.language === 'en' ? `Item ${index + 1}` : `Пункт ${index + 1}`}
+                        className="flex-1 px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900/40 text-slate-800 dark:text-slate-100 rounded-xl border border-slate-100 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition text-sm"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddListBuilderItem();
+                          }
+                        }}
+                      />
+                      {listBuilderItems.length > 1 && (
+                        <button
+                          onClick={() => handleRemoveListBuilderItem(index)}
+                          className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl transition cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </motion.div>
+                  ))}
+                </div>
+
+                {/* Add Item Button */}
+                <button
+                  onClick={handleAddListBuilderItem}
+                  className="w-full flex items-center justify-center gap-2 mt-3 py-2.5 border-2 border-dashed border-slate-200 dark:border-slate-700/60 text-slate-500 dark:text-slate-400 hover:border-blue-500 hover:text-blue-500 dark:hover:text-blue-400 rounded-xl transition text-xs font-bold cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  {userSettings.language === 'en' ? 'Add Item' : 'Добавить пункт'}
+                </button>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 mt-6 pt-3 border-t border-slate-100 dark:border-slate-700/50">
+                <button
+                  onClick={() => setShowListBuilderModal(false)}
+                  className="flex-1 py-3 text-slate-500 dark:text-slate-400 font-bold text-sm bg-slate-50 dark:bg-slate-900/30 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-xl transition cursor-pointer"
+                >
+                  {userSettings.language === 'en' ? 'Cancel' : 'Отмена'}
+                </button>
+                <button
+                  onClick={handleCreateChecklistFromModal}
+                  className="flex-1 py-3 text-white font-bold text-sm bg-blue-500 hover:bg-blue-600 rounded-xl transition shadow-md shadow-blue-500/15 cursor-pointer"
+                >
+                  {userSettings.language === 'en' ? 'Create List' : 'Создать список'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      
     </div>
   );
 }

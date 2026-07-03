@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  ArrowLeft, Save, Shield, ShieldCheck, Download, Eye, FileText,
-  Clock, BarChart2, BookOpen, Layers, Sparkles, AlertTriangle, Printer,
-  EyeOff, ChevronRight, LayoutGrid, Trash2, HelpCircle
+  ChevronLeft, Download, FileText, Check, List,
+  Bold, Italic, Underline, Heading1, Heading2, ListOrdered,
+  X, Printer, ListTodo, Trash2, Plus
 } from 'lucide-react';
 import { Document } from '../types';
-import Toolbar from './Toolbar';
-import { sha256 } from '../utils/crypto';
 
 interface DocumentEditorProps {
   document: Document;
@@ -24,63 +22,33 @@ export default function DocumentEditor({
 }: DocumentEditorProps) {
   const [doc, setDoc] = useState<Document>(initialDoc);
   const [isSaved, setIsSaved] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [activeFont, setActiveFont] = useState(initialDoc.fontFamily || 'Inter');
-  const [activeSize, setActiveSize] = useState(initialDoc.fontSize || '16px');
-  
-  // Right Sidebar Panels
-  const [showSidebar, setShowSidebar] = useState(true);
-  const [activeTab, setActiveTab] = useState<'settings' | 'outline' | 'security'>('settings');
-
-  // Stats
-  const [wordCount, setWordCount] = useState(initialDoc.wordCount || 0);
-  const [charCount, setCharCount] = useState(initialDoc.charCount || 0);
-  const [paragraphCount, setParagraphCount] = useState(1);
-
-  // Security features (Individual PIN lock)
-  const [pinLockEnabled, setPinLockEnabled] = useState(initialDoc.isLocked);
-  const [pin, setPin] = useState('');
-  const [pinError, setPinError] = useState('');
-  const [isTemporarilyUnlocked, setIsTemporarilyUnlocked] = useState(!initialDoc.isLocked);
-
-  // Outline
-  const [outline, setOutline] = useState<{ id: string; text: string; level: number }[]>([]);
-
-  // Ruler Toggle
-  const [showRuler, setShowRuler] = useState(true);
-
-  // Layout & Margins
-  const [marginSize, setMarginSize] = useState<'normal' | 'narrow' | 'wide'>('normal');
-  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>(initialDoc.orientation || 'portrait');
-
   const editorRef = useRef<HTMLDivElement | null>(null);
 
-  // Setup margins mapping
-  const marginClasses = {
-    normal: 'p-[96px]', // 1 inch
-    narrow: 'p-[48px]', // 0.5 inch
-    wide: 'p-[144px]'   // 1.5 inch
-  };
-
+  const [savedSelection, setSavedSelection] = useState<Range | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
+  
+  // Custom list builder states
+  const [showListBuilderModal, setShowListBuilderModal] = useState(false);
+  const [listBuilderTitle, setListBuilderTitle] = useState('');
+  const [listBuilderItems, setListBuilderItems] = useState<string[]>(['']);
+  
   // Sync state on load
   useEffect(() => {
     setDoc(initialDoc);
-    setIsTemporarilyUnlocked(!initialDoc.isLocked);
-    setPinLockEnabled(initialDoc.isLocked);
   }, [initialDoc]);
 
   // Handle auto-saving on edits
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (!isSaved && isTemporarilyUnlocked) {
+      if (!isSaved) {
         handleSave();
       }
-    }, 3000); // Auto-save after 3 seconds of silence
+    }, 2000); // Auto-save after 2 seconds of silence
 
     return () => clearTimeout(timer);
-  }, [isSaved]);
+  }, [isSaved, doc]);
 
-  // Read content stats and outline
+  // Read content stats
   const handleEditorInput = () => {
     if (!editorRef.current) return;
     setIsSaved(false);
@@ -88,813 +56,598 @@ export default function DocumentEditor({
     const text = editorRef.current.innerText || '';
     const words = text.trim() ? text.trim().split(/\s+/).length : 0;
     const chars = text.length;
-    const paragraphs = text.split('\n').filter(p => p.trim() !== '').length || 1;
 
-    setWordCount(words);
-    setCharCount(chars);
-    setParagraphCount(paragraphs);
-
-    // Build outline from H1, H2, H3 tags
-    const headingElements = Array.from(editorRef.current.querySelectorAll('h1, h2, h3, h4')) as HTMLElement[];
-    const newOutline = headingElements.map((el, index) => {
-      // Ensure element has an ID for scrolling
-      if (!el.id) {
-        el.id = `header-node-${index}`;
-      }
-      return {
-        id: el.id,
-        text: el.textContent || '',
-        level: parseInt(el.tagName.substring(1)) || 1
-      };
-    });
-    setOutline(newOutline);
+    setDoc(prev => ({
+      ...prev,
+      content: editorRef.current!.innerHTML,
+      wordCount: words,
+      charCount: chars,
+      updatedAt: Date.now()
+    }));
   };
 
-  // Initial stats calculation and outline generation
+  const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setIsSaved(false);
+    setDoc(prev => ({
+      ...prev,
+      title: e.target.value,
+      updatedAt: Date.now()
+    }));
+  };
+
+  // Initial content loading
   useEffect(() => {
-    if (editorRef.current && isTemporarilyUnlocked) {
+    if (editorRef.current && editorRef.current.innerHTML !== doc.content) {
       editorRef.current.innerHTML = doc.content;
-      handleEditorInput();
-      
-      // Focus on editor
-      setTimeout(() => {
-        if (editorRef.current) editorRef.current.focus();
-      }, 100);
     }
-  }, [isTemporarilyUnlocked]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Action Save
-  const handleSave = async () => {
-    if (!editorRef.current || !isTemporarilyUnlocked) return;
-    setSaving(true);
-
-    const updatedDoc: Document = {
-      ...doc,
-      content: editorRef.current.innerHTML,
-      wordCount,
-      charCount,
-      updatedAt: Date.now(),
-      fontFamily: activeFont,
-      fontSize: activeSize,
-      isLocked: pinLockEnabled,
-      orientation
-    };
-
-    onSave(updatedDoc);
-    setDoc(updatedDoc);
+  const handleSave = () => {
+    onSave(doc);
     setIsSaved(true);
-    setSaving(false);
   };
 
-  // individual Document PIN Lock activation
-  const handleTogglePinLock = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!pin) {
-      setPinError('PIN-код не может быть пустым.');
-      return;
-    }
-    if (pin.length < 4) {
-      setPinError('PIN-код должен состоять минимум из 4 цифр.');
-      return;
-    }
-
-    setPinError('');
-    try {
-      if (pinLockEnabled) {
-        // Disabling PIN lock: require current PIN
-        const hashedInput = await sha256(pin);
-        if (hashedInput === doc.pinCode) {
-          const updatedDoc = { ...doc, isLocked: false, pinCode: null };
-          setDoc(updatedDoc);
-          setPinLockEnabled(false);
-          setIsTemporarilyUnlocked(true);
-          onSave(updatedDoc);
-          setPin('');
-        } else {
-          setPinError('Неверный PIN-код. Действие отклонено.');
-        }
+  const getPlainText = (html: string) => {
+    const temp = document.createElement("div");
+    temp.innerHTML = html;
+    
+    // Replace breaks/paragraphs with standard formatting
+    const elements = temp.querySelectorAll('p, div, br, h1, h2, h3, li');
+    elements.forEach(el => {
+      if (el.tagName === 'BR') {
+        el.after('\n');
       } else {
-        // Enabling PIN lock
-        const hashedPin = await sha256(pin);
-        const updatedDoc = { ...doc, isLocked: true, pinCode: hashedPin };
-        setDoc(updatedDoc);
-        setPinLockEnabled(true);
-        setIsTemporarilyUnlocked(true);
-        onSave(updatedDoc);
-        setPin('');
+        el.after('\n');
       }
-    } catch (err) {
-      setPinError('Произошла ошибка авторизации.');
-    }
+    });
+    
+    return temp.textContent || temp.innerText || "";
   };
 
-  // Unlock individual document
-  const handleUnlockDoc = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPinError('');
-    try {
-      const hashedInput = await sha256(pin);
-      if (hashedInput === doc.pinCode) {
-        setIsTemporarilyUnlocked(true);
-        setPin('');
-      } else {
-        setPinError('Неверный PIN-код.');
+  const downloadTxtFormat = () => {
+    handleSave();
+    const element = document.createElement("a");
+    const plainText = getPlainText(doc.content);
+    const file = new Blob([plainText], {type: 'text/plain;charset=utf-8'});
+    element.href = URL.createObjectURL(file);
+    element.download = `${doc.title || 'document'}.txt`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
+  const downloadDocFormat = () => {
+    handleSave();
+    const element = document.createElement("a");
+    const htmlContent = `
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head>
+        <meta charset="utf-8">
+        <title>${doc.title || 'document'}</title>
+        <style>
+          body { font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #334155; }
+          h1 { color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
+          h2 { color: #1e293b; margin-top: 24px; }
+          h3 { color: #334155; margin-top: 18px; }
+          p { margin-bottom: 12px; }
+          ul, ol { margin-left: 20px; margin-bottom: 12px; }
+        </style>
+      </head>
+      <body>
+        <h1>${doc.title || 'document'}</h1>
+        ${doc.content}
+      </body>
+      </html>
+    `;
+    const file = new Blob([htmlContent], {type: 'application/msword;charset=utf-8'});
+    element.href = URL.createObjectURL(file);
+    element.download = `${doc.title || 'document'}.doc`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
+  const downloadHtmlFormat = () => {
+    handleSave();
+    const element = document.createElement("a");
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${doc.title || 'document'}</title>
+        <style>
+          body {
+            font-family: system-ui, -apple-system, sans-serif;
+            line-height: 1.7;
+            color: #334155;
+            max-width: 680px;
+            margin: 40px auto;
+            padding: 0 20px;
+          }
+          h1 { color: #0f172a; font-size: 2.25rem; font-weight: 700; margin-bottom: 1.5rem; }
+          h2 { color: #1e293b; font-size: 1.5rem; font-weight: 600; margin-top: 2rem; }
+          h3 { color: #334155; font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; }
+          p { margin-bottom: 1rem; }
+        </style>
+      </head>
+      <body>
+        <h1>${doc.title || 'document'}</h1>
+        ${doc.content}
+      </body>
+      </html>
+    `;
+    const file = new Blob([htmlContent], {type: 'text/html;charset=utf-8'});
+    element.href = URL.createObjectURL(file);
+    element.download = `${doc.title || 'document'}.html`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
+  const handleDownload = () => {
+    handleSave();
+    setShowExportModal(true);
+  };
+
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      if (editorRef.current && editorRef.current.contains(range.commonAncestorContainer)) {
+        setSavedSelection(range);
       }
-    } catch (err) {
-      setPinError('Произошла ошибка авторизации.');
     }
   };
 
-  // Save as custom reusable template
-  const handleSaveAsTemplate = () => {
-    if (!editorRef.current) return;
-    const templateName = window.prompt('Введите название для вашего нового шаблона:', `Шаблон: ${doc.title}`);
-    if (!templateName) return;
-
-    // Create a new template object
-    const newTemplate: Document = {
-      id: `custom-tpl-${Date.now()}`,
-      title: templateName,
-      content: editorRef.current.innerHTML,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      isTemplate: true,
-      isLocked: false,
-      pinCode: null,
-      category: 'Шаблон',
-      wordCount,
-      charCount,
-      fontFamily: activeFont,
-      fontSize: activeSize
-    };
-
-    onSave(newTemplate);
-    alert(`"${templateName}" успешно сохранен в вашу библиотеку шаблонов!`);
-  };
-
-  // Exporters
-  const handleExportText = () => {
-    if (!editorRef.current) return;
-    const text = editorRef.current.innerText || '';
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    downloadBlob(blob, `${doc.title}.txt`);
-  };
-
-  const handleExportHTML = () => {
-    if (!editorRef.current) return;
-    const bodyHtml = editorRef.current.innerHTML;
-    const fullHtml = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>${doc.title}</title>
-  <style>
-    body { font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 20px; color: #1e293b; }
-    h1 { font-size: 2em; border-bottom: 1px solid #cbd5e1; padding-bottom: 10px; }
-    h2 { font-size: 1.5em; margin-top: 30px; }
-    blockquote { border-left: 4px solid #4f46e5; padding-left: 15px; font-style: italic; color: #475569; }
-    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-    td, th { border: 1px solid #cbd5e1; padding: 10px; }
-  </style>
-</head>
-<body>
-  ${bodyHtml}
-</body>
-</html>`;
-    const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
-    downloadBlob(blob, `${doc.title}.html`);
-  };
-
-  const handleExportMarkdown = () => {
-    if (!editorRef.current) return;
-    // Simple HTML to MD converter helper
-    let html = editorRef.current.innerHTML;
-    // Basic formatting regex replacements
-    let md = html
-      .replace(/<h1>(.*?)<\/h1>/gi, '# $1\n\n')
-      .replace(/<h2>(.*?)<\/h2>/gi, '## $1\n\n')
-      .replace(/<h3>(.*?)<\/h3>/gi, '### $1\n\n')
-      .replace(/<b>(.*?)<\/b>|<strong>(.*?)<\/strong>/gi, '**$1**')
-      .replace(/<i>(.*?)<\/i>|<em>(.*?)<\/em>/gi, '*$1*')
-      .replace(/<u>(.*?)<\/u>/gi, '_$1_')
-      .replace(/<blockquote[^>]*>(.*?)<\/blockquote>/gi, '> $1\n\n')
-      .replace(/<p[^>]*>(.*?)<\/p>/gi, '$1\n\n')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<div[^>]*>(.*?)<\/div>/gi, '$1\n')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/<[^>]+>/g, ''); // Strip remaining tags
-
-    const blob = new Blob([md.trim()], { type: 'text/markdown;charset=utf-8' });
-    downloadBlob(blob, `${doc.title}.md`);
-  };
-
-  const handleExportJSON = () => {
-    const jsonString = JSON.stringify(doc, null, 2);
-    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
-    downloadBlob(blob, `${doc.title}.json`);
-  };
-
-  const downloadBlob = (blob: Blob, filename: string) => {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  // Browser Print handler (Ctrl+P) styled flawlessly to exclude sidebars & toolbars
-  const handlePrint = () => {
-    window.print();
-  };
-
-  // Scroll header nodes smoothly into view
-  const handleScrollToHeader = (id: string) => {
-    const element = document.getElementById(id);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const formatText = (command: string, value?: string) => {
+    if (editorRef.current) {
+      editorRef.current.focus();
     }
+    if (savedSelection) {
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(savedSelection);
+    }
+    document.execCommand(command, false, value);
+    handleEditorInput();
+  };
+
+  const handleAddListBuilderItem = () => {
+    setListBuilderItems([...listBuilderItems, '']);
+  };
+
+  const handleListBuilderItemChange = (index: number, value: string) => {
+    const updated = [...listBuilderItems];
+    updated[index] = value;
+    setListBuilderItems(updated);
+  };
+
+  const handleRemoveListBuilderItem = (index: number) => {
+    if (listBuilderItems.length > 1) {
+      setListBuilderItems(listBuilderItems.filter((_, i) => i !== index));
+    }
+  };
+
+  const handleInsertChecklistFromModal = () => {
+    if (editorRef.current) {
+      editorRef.current.focus();
+    }
+    if (savedSelection) {
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(savedSelection);
+    }
+
+    const title = listBuilderTitle.trim();
+    const itemsHtml = listBuilderItems
+      .map(item => item.trim())
+      .filter(item => item.length > 0)
+      .map(item => `
+        <div style="display: flex; align-items: center; gap: 12px; margin-top: 6px; margin-bottom: 6px;">
+          <input type="checkbox" style="width: 18px; height: 18px; accent-color: #3b82f6; cursor: pointer;">
+          &nbsp;<span style="font-size: 1.05rem;">${item}</span>
+        </div>
+      `).join('');
+
+    const checklistHtml = `
+      <div style="font-family: Inter, -apple-system, sans-serif; line-height: 1.6; color: #1e293b; margin-top: 12px; margin-bottom: 12px;">
+        ${title ? `<h3 style="margin-bottom: 8px;">${title}</h3>` : ''}
+        ${itemsHtml || `
+          <div style="display: flex; align-items: center; gap: 12px; margin-top: 6px; margin-bottom: 6px;">
+            <input type="checkbox" style="width: 18px; height: 18px; accent-color: #3b82f6; cursor: pointer;">
+            &nbsp;<span style="font-size: 1.05rem;">Новая задача</span>
+          </div>
+        `}
+      </div>
+    `;
+
+    document.execCommand('insertHTML', false, checklistHtml);
+    handleEditorInput();
+    setShowListBuilderModal(false);
+  };
+
+  const insertChecklistItem = () => {
+    saveSelection();
+    setListBuilderTitle('');
+    setListBuilderItems(['']);
+    setShowListBuilderModal(true);
   };
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] flex flex-col relative select-text" id="rich-editor-wrapper">
+    <div className="h-[100dvh] bg-white dark:bg-slate-900 flex flex-col font-sans select-none w-full relative overflow-hidden transition-colors duration-300">
       
-      {/* Header bar */}
-      <div className="bg-white border-b border-slate-200 px-3 sm:px-6 py-2 sm:py-3 flex items-center justify-between shadow-xs print:hidden z-10 flex-wrap sm:flex-nowrap gap-2 sm:gap-0">
-        <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-1/2">
-          <button
-            onClick={onBack}
-            className="p-1.5 sm:p-2 hover:bg-slate-50 border border-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition cursor-pointer flex-shrink-0"
-            title="Вернуться к списку проектов"
+      {/* Top Header */}
+      <header className="px-4 py-4 flex items-center justify-between bg-white dark:bg-slate-900 sticky top-0 z-10 border-b border-transparent transition-colors duration-300">
+        <button 
+          onClick={() => { handleSave(); onBack(); }}
+          className="text-slate-900 dark:text-white p-2 -ml-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition cursor-pointer"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </button>
+        
+        <h1 className="text-sm font-semibold text-slate-900 dark:text-white truncate max-w-[200px]">
+          {doc.title || 'Новый документ'}
+        </h1>
+        
+        <button 
+          onClick={handleDownload}
+          title="Скачать файл"
+          className="text-slate-900 dark:text-white p-2 -mr-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition cursor-pointer"
+        >
+          <Download className="w-6 h-6" />
+        </button>
+      </header>
+
+      {/* Main Editor Content Area */}
+      <main className="flex-1 overflow-y-auto px-6 py-4 flex flex-col">
+        {/* Title Input (Acting as H1) */}
+        <input
+          type="text"
+          value={doc.title}
+          onChange={handleTitleChange}
+          placeholder="Заголовок"
+          className="w-full text-3xl font-bold text-slate-900 dark:text-white placeholder-slate-300 dark:placeholder-slate-600 border-none focus:outline-none focus:ring-0 mb-6 bg-transparent"
+        />
+
+        {/* Rich Text Area */}
+        <div 
+          ref={editorRef}
+          contentEditable
+          onInput={handleEditorInput}
+          onBlur={saveSelection}
+          onKeyUp={saveSelection}
+          onMouseUp={saveSelection}
+          onPointerUp={saveSelection}
+          onClick={(e) => {
+            const target = e.target as HTMLElement;
+            if (target && target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox') {
+              const cb = target as HTMLInputElement;
+              if (cb.hasAttribute('checked')) {
+                cb.removeAttribute('checked');
+              } else {
+                cb.setAttribute('checked', 'checked');
+              }
+              handleEditorInput();
+            }
+          }}
+          data-placeholder="Начните вводить текст здесь..."
+          className="flex-1 w-full text-[17px] leading-relaxed text-slate-700 dark:text-slate-300 outline-none pb-32"
+          style={{ minHeight: '50vh' }}
+        />
+      </main>
+
+      {/* Floating Toolbar (Simulating keyboard accessory bar) */}
+      <div 
+        className="bg-[#F2F2F7] dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 px-2 pt-3 flex items-center justify-between z-20 shrink-0 w-full relative transition-colors duration-300"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)' }}
+      >
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar w-full">
+          <select 
+            onChange={(e) => formatText('fontName', e.target.value)}
+            className="p-2 bg-transparent text-slate-700 dark:text-slate-300 font-medium text-sm focus:outline-none rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer shrink-0"
+            defaultValue="Inter"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <option value="Inter">Inter</option>
+            <option value="Merriweather">Serif</option>
+            <option value="JetBrains Mono">Mono</option>
+          </select>
+
+          <select 
+            onChange={(e) => formatText('foreColor', e.target.value)}
+            className="p-2 bg-transparent text-slate-700 dark:text-slate-300 font-medium text-sm focus:outline-none rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer shrink-0"
+            defaultValue="currentColor"
+          >
+            <option value="currentColor">Цвет</option>
+            <option value="#3b82f6">Синий</option>
+            <option value="#ef4444">Красный</option>
+            <option value="#10b981">Зеленый</option>
+            <option value="#8b5cf6">Фиолетовый</option>
+            <option value="#f59e0b">Оранжевый</option>
+          </select>
+
+          <div className="w-px h-6 bg-slate-300 dark:bg-slate-600 mx-1 shrink-0"></div>
+
+          <button 
+            onMouseDown={(e) => { e.preventDefault(); formatText('bold'); }}
+            className="p-2.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition shrink-0"
+          >
+            <Bold className="w-5 h-5" />
+          </button>
+          <button 
+            onMouseDown={(e) => { e.preventDefault(); formatText('italic'); }}
+            className="p-2.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition shrink-0"
+          >
+            <Italic className="w-5 h-5" />
+          </button>
+          <button 
+            onMouseDown={(e) => { e.preventDefault(); formatText('underline'); }}
+            className="p-2.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition shrink-0"
+          >
+            <Underline className="w-5 h-5" />
           </button>
           
-          <div className="flex flex-col flex-grow min-w-0">
-            <input
-              id="editor-document-title-input"
-              type="text"
-              value={doc.title}
-              onChange={e => {
-                setIsSaved(false);
-                setDoc({ ...doc, title: e.target.value });
-              }}
-              className="text-base sm:text-lg font-bold text-slate-900 border-b border-transparent hover:border-slate-200 focus:border-indigo-600 focus:outline-none transition py-0.5 px-1 truncate w-full max-w-xs sm:max-w-sm"
-              placeholder="Безымянный документ"
-            />
-            
-            <div className="flex items-center gap-2 sm:gap-3 text-xxs text-slate-400 mt-0.5 sm:mt-1 flex-wrap">
-              <span className="hidden sm:flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5 text-slate-400" />
-                Автосохранение активно
-              </span>
-              <span className="hidden sm:inline">•</span>
-              <span className={`font-semibold ${isSaved ? 'text-green-600 font-bold' : 'text-amber-500'}`}>
-                {saving ? 'Сохранение...' : isSaved ? 'Сохранено локально' : 'Несохраненные изменения'}
-              </span>
-              <span>•</span>
-              <select
-                value={doc.category}
-                onChange={e => {
-                  setIsSaved(false);
-                  setDoc({ ...doc, category: e.target.value });
-                }}
-                className="bg-transparent text-slate-500 focus:outline-none font-medium hover:text-indigo-600 cursor-pointer"
-              >
-                <option value="Работа">💼 Работа</option>
-                <option value="Личное">🏡 Личное</option>
-                <option value="Черновик">📝 Черновик</option>
-                <option value="Важное">⭐ Важное</option>
-                <option value="Творчество">🎨 Творчество</option>
-                <option value="Шаблон">📂 Шаблон</option>
-              </select>
-            </div>
-          </div>
+          <div className="w-px h-6 bg-slate-300 dark:bg-slate-600 mx-1 shrink-0"></div>
+
+          <button 
+            onMouseDown={(e) => { e.preventDefault(); formatText('insertUnorderedList'); }}
+            className="p-2.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition shrink-0"
+          >
+            <List className="w-5 h-5" />
+          </button>
+          <button 
+            onMouseDown={(e) => { e.preventDefault(); formatText('insertOrderedList'); }}
+            className="p-2.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition shrink-0"
+          >
+            <ListOrdered className="w-5 h-5" />
+          </button>
+          <button 
+            onMouseDown={(e) => { e.preventDefault(); insertChecklistItem(); }}
+            title="Вставить список задач (Новое)"
+            className="p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition shrink-0 flex items-center gap-1 border border-dashed border-emerald-300 dark:border-emerald-800/40"
+          >
+            <ListTodo className="w-5 h-5 text-emerald-500" />
+            <span className="text-[8px] bg-emerald-500 text-white font-extrabold px-1 py-0.2 rounded-sm uppercase scale-90">NEW</span>
+          </button>
+
+          <div className="w-px h-6 bg-slate-300 dark:bg-slate-600 mx-1 shrink-0"></div>
+
+          <button 
+            onMouseDown={(e) => { e.preventDefault(); formatText('formatBlock', 'H2'); }}
+            className="p-2.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition shrink-0"
+          >
+            <Heading1 className="w-5 h-5" />
+          </button>
+          <button 
+            onMouseDown={(e) => { e.preventDefault(); formatText('formatBlock', 'H3'); }}
+            className="p-2.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition shrink-0"
+          >
+            <Heading2 className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* Primary action controls */}
-        <div className="flex items-center gap-1.5 sm:gap-2 ml-auto">
-          <button
-            onClick={handleSave}
-            disabled={isSaved || !isTemporarilyUnlocked}
-            className="px-3 sm:px-4 py-1.5 sm:py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-100 disabled:text-slate-400 font-semibold text-white text-xs rounded-lg transition shadow-xs flex items-center gap-1.5 cursor-pointer"
-          >
-            <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span className="hidden sm:inline">Сохранить</span>
-          </button>
-
-          <button
-            onClick={() => setShowSidebar(!showSidebar)}
-            className={`p-1.5 sm:p-2 border border-slate-200 rounded-lg text-slate-600 hover:text-slate-900 bg-white transition cursor-pointer ${
-              showSidebar ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : ''
-            }`}
-            title="Переключить боковую панель инструментов"
-          >
-            <Layers className="w-4 h-4" />
-          </button>
+        {/* Sync Indicator */}
+        <div className="px-3 flex items-center justify-center">
+          {!isSaved ? (
+            <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600 animate-pulse" />
+          ) : (
+            <Check className="w-4 h-4 text-slate-400 dark:text-slate-500" />
+          )}
         </div>
       </div>
 
-      {/* Editor Content Area (Locked vs. Open) */}
-      {!isTemporarilyUnlocked ? (
-        <div className="flex-grow flex items-center justify-center p-4 min-h-[600px] bg-[#f8fafc]">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.97 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-sm bg-white border border-slate-200 rounded-lg p-6 shadow-md text-center"
-          >
-            <div className="inline-flex p-3 bg-red-50 rounded-xl border border-red-100 mb-4 text-red-600">
-              <Shield className="w-6 h-6" />
+      {/* Export Format Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-slate-100 dark:border-slate-700 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-slate-900 dark:text-white text-lg">Экспорт файла</h3>
+              <button 
+                onClick={() => setShowExportModal(false)}
+                className="text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 p-1.5 rounded-full transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <h3 className="text-lg font-bold text-slate-900 mb-2">Файл защищен паролем</h3>
-            <p className="text-slate-500 text-xs mb-6">
-              Этот документ защищен индивидуальным кодом. Введите 4-значный PIN-код, чтобы продолжить.
-            </p>
+            
+            <p className="text-xs text-slate-400 dark:text-slate-500 mb-5">Выберите формат для сохранения документа на устройство:</p>
+            
+            <div className="space-y-3">
+              {/* PDF option */}
+              <button
+                onClick={() => {
+                  setShowExportModal(false);
+                  setTimeout(() => {
+                    window.print();
+                  }, 250);
+                }}
+                className="w-full flex items-center gap-3 p-3.5 bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800/60 text-left transition cursor-pointer"
+              >
+                <div className="w-10 h-10 rounded-xl bg-red-50 dark:bg-red-950/30 text-red-500 flex items-center justify-center flex-shrink-0">
+                  <Printer className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="font-bold text-sm text-slate-900 dark:text-white">PDF Документ (.pdf)</div>
+                  <div className="text-xs text-slate-400 dark:text-slate-500">Сохранить с исходным оформлением</div>
+                </div>
+              </button>
 
-            <form onSubmit={handleUnlockDoc} className="space-y-4">
-              <input
-                id="doc-pin-unlock-input"
-                type="password"
-                maxLength={4}
-                value={pin}
-                onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="••••"
-                className="w-32 mx-auto text-center tracking-widest text-lg font-bold py-2 bg-white border border-slate-200 focus:border-indigo-500 text-slate-800 rounded-lg focus:outline-none transition animate-pulse"
-                required
-              />
+              {/* DOC Option */}
+              <button
+                onClick={() => {
+                  downloadDocFormat();
+                  setShowExportModal(false);
+                }}
+                className="w-full flex items-center gap-3 p-3.5 bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800/60 text-left transition cursor-pointer"
+              >
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/30 text-blue-500 flex items-center justify-center flex-shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="font-bold text-sm text-slate-900 dark:text-white font-sans">Документ Word (.doc)</div>
+                  <div className="text-xs text-slate-400 dark:text-slate-500">Идеально для Word и LibreOffice</div>
+                </div>
+              </button>
 
-              {pinError && (
-                <div className="text-xs text-red-600 font-semibold">{pinError}</div>
-              )}
+              {/* Web Page (.html) */}
+              <button
+                onClick={() => {
+                  downloadHtmlFormat();
+                  setShowExportModal(false);
+                }}
+                className="w-full flex items-center gap-3 p-3.5 bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800/60 text-left transition cursor-pointer"
+              >
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 text-emerald-500 flex items-center justify-center flex-shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="font-bold text-sm text-slate-900 dark:text-white font-sans">Веб-страница (.html)</div>
+                  <div className="text-xs text-slate-400 dark:text-slate-500">Открывается в любом браузере</div>
+                </div>
+              </button>
 
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={onBack}
-                  className="w-1/2 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg cursor-pointer"
+              {/* TXT Option */}
+              <button
+                onClick={() => {
+                  downloadTxtFormat();
+                  setShowExportModal(false);
+                }}
+                className="w-full flex items-center gap-3 p-3.5 bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800/60 text-left transition cursor-pointer"
+              >
+                <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 flex items-center justify-center flex-shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="font-bold text-sm text-slate-900 dark:text-white">Текстовый файл (.txt)</div>
+                  <div className="text-xs text-slate-400 dark:text-slate-500">Простой текст без стилей</div>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive List Builder Modal */}
+      <AnimatePresence>
+        {showListBuilderModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-slate-800 w-full max-w-md rounded-3xl p-6 shadow-2xl border border-slate-100 dark:border-slate-700/60 my-8"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 dark:border-slate-700/50">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 text-emerald-500">
+                    <ListTodo className="w-5 h-5" />
+                  </div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-lg">Создание списка задач</h3>
+                </div>
+                <button 
+                  onClick={() => setShowListBuilderModal(false)}
+                  className="text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 p-1.5 rounded-full transition cursor-pointer"
                 >
-                  Главная
-                </button>
-                <button
-                  id="doc-pin-unlock-submit"
-                  type="submit"
-                  className="w-1/2 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg cursor-pointer"
-                >
-                  Проверить PIN
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-            </form>
-          </motion.div>
-        </div>
-      ) : (
-        <>
-          {/* Main Workspace with Toolbars */}
-          <Toolbar
-            editorRef={editorRef}
-            activeFont={activeFont}
-            setActiveFont={setActiveFont}
-            activeSize={activeSize}
-            setActiveSize={setActiveSize}
-          />
 
-          <div className="flex-grow flex relative overflow-hidden h-full">
-            {/* Scrollable Document Canvas Container */}
-            <div className="flex-grow overflow-y-auto overflow-x-hidden p-0 sm:p-8 flex flex-col items-center print:p-0 print:overflow-visible bg-white sm:bg-transparent">
-              
-              {/* Horizontal Ruler */}
-              {showRuler && (
-                <div className="hidden sm:flex w-[816px] h-6 bg-white border border-slate-200 rounded-t-sm items-end px-[96px] py-1 select-none text-[8px] font-mono text-slate-400 relative shadow-sm mb-2 print:hidden flex-shrink-0">
-                  <div className="absolute left-4 bottom-1 font-bold text-[9px] text-slate-500">ЛИНЕЙКА ПОЛЕЙ</div>
-                  <div className="w-full flex justify-between">
-                    <span>1"</span>
-                    <span>2"</span>
-                    <span>3"</span>
-                    <span>4"</span>
-                    <span>5"</span>
-                    <span>6"</span>
-                    <span>7"</span>
-                    <span>8"</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Physical Word-like White Sheet Page */}
-              <div
-                className={`bg-white sm:shadow-2xl sm:rounded-sm border-0 sm:border border-slate-200 ring-0 sm:ring-1 ring-black ring-opacity-5 transition-all duration-300 print:shadow-none print:border-none print:m-0 print:p-0 ${
-                  orientation === 'portrait'
-                    ? 'w-full sm:w-[816px] min-h-[calc(100vh-140px)] sm:min-h-[1056px]' // standard letter size
-                    : 'w-full sm:w-[1056px] min-h-[calc(100vh-140px)] sm:min-h-[816px]'
-                } ${marginClasses[marginSize].replace(/p-\[/g, 'sm:p-[')} relative flex-shrink-0`}
-                onClick={() => {
-                  if (editorRef.current) editorRef.current.focus();
-                }}
-              >
-                {/* Physical sheet watermark grid guides */}
-                <div className="absolute top-4 left-4 text-xxs font-mono text-slate-300 hidden sm:block print:hidden select-none">
-                  {orientation === 'portrait' ? 'КНИЖНАЯ' : 'АЛЬБОМНАЯ'}
-                </div>
-
-                {/* Main Content editable area */}
-                <div
-                  id="rich-editor-canvas"
-                  ref={editorRef}
-                  contentEditable
-                  onInput={handleEditorInput}
-                  data-placeholder="Начните вводить текст здесь..."
-                  style={{
-                    fontFamily: `"${activeFont}", sans-serif`,
-                    fontSize: activeSize,
-                    minHeight: '100%'
-                  }}
-                  className="focus:outline-none min-h-[600px] sm:min-h-[850px] leading-relaxed break-words text-slate-800 p-4 sm:p-0"
+              {/* List Title Input */}
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">
+                  Заголовок списка (необязательно)
+                </label>
+                <input
+                  type="text"
+                  value={listBuilderTitle}
+                  onChange={(e) => setListBuilderTitle(e.target.value)}
+                  placeholder="например, Список покупок"
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900/40 text-slate-800 dark:text-slate-100 rounded-xl border border-slate-100 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition text-sm font-semibold"
                 />
               </div>
 
-              {/* Quick statistics tag under the page */}
-              <div className="hidden sm:flex w-[816px] max-w-full justify-between items-center text-slate-400 text-xxs mt-4 px-2 print:hidden">
-                <span className="flex items-center gap-1.5 font-medium">
-                  <Layers className="w-3.5 h-3.5" />
-                  Стандартный макет страницы
-                </span>
-                <span className="font-mono">
-                  Символов: {charCount} | Слов: {wordCount}
-                </span>
-              </div>
-            </div>
+              {/* Items Container with scroll */}
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">
+                  Пункты списка
+                </label>
+                
+                <div className="space-y-2 max-h-[30vh] overflow-y-auto pr-1">
+                  {listBuilderItems.map((item, index) => (
+                    <motion.div 
+                      key={index} 
+                      layout
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex items-center gap-2"
+                    >
+                      <div className="w-5 h-5 rounded border-2 border-slate-300 dark:border-slate-600 flex-shrink-0 flex items-center justify-center text-xs text-slate-300">
+                        {index + 1}
+                      </div>
+                      <input
+                        type="text"
+                        value={item}
+                        onChange={(e) => handleListBuilderItemChange(index, e.target.value)}
+                        placeholder={`Пункт ${index + 1}`}
+                        className="flex-1 px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900/40 text-slate-800 dark:text-slate-100 rounded-xl border border-slate-100 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition text-sm"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddListBuilderItem();
+                          }
+                        }}
+                      />
+                      {listBuilderItems.length > 1 && (
+                        <button
+                          onClick={() => handleRemoveListBuilderItem(index)}
+                          className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl transition cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </motion.div>
+                  ))}
+                </div>
 
-            {/* Collapsible Utility Sidebar panel */}
-            <AnimatePresence>
-              {showSidebar && (
-                <motion.div
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: window.innerWidth < 640 ? '100%' : 320, opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  className="absolute sm:relative inset-0 sm:inset-auto bg-white border-l border-slate-200 flex flex-col flex-shrink-0 print:hidden h-full shadow-2xl sm:shadow-sm z-30 overflow-hidden"
+                {/* Add Item Button */}
+                <button
+                  onClick={handleAddListBuilderItem}
+                  className="w-full flex items-center justify-center gap-2 mt-3 py-2.5 border-2 border-dashed border-slate-200 dark:border-slate-700/60 text-slate-500 dark:text-slate-400 hover:border-blue-500 hover:text-blue-500 dark:hover:text-blue-400 rounded-xl transition text-xs font-bold cursor-pointer"
                 >
-                  <div className="w-full h-full flex flex-col min-w-[320px]">
-                    {/* Close button for mobile */}
-                    <div className="sm:hidden flex items-center justify-between p-3 border-b border-slate-200 bg-slate-50">
-                      <span className="text-sm font-bold text-slate-800">Меню инструментов</span>
-                      <button
-                        onClick={() => setShowSidebar(false)}
-                        className="p-1.5 bg-white border border-slate-200 rounded-md text-slate-500"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    </div>
+                  <Plus className="w-4 h-4" />
+                  Добавить пункт
+                </button>
+              </div>
 
-                    {/* Sidebar Tabs */}
-                    <div className="flex border-b border-slate-200 shrink-0">
-                    <button
-                      onClick={() => setActiveTab('settings')}
-                      className={`flex-1 py-3 text-center text-xs font-semibold transition cursor-pointer ${
-                        activeTab === 'settings'
-                          ? 'border-b-2 border-indigo-600 text-indigo-600'
-                          : 'text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      Разметка
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('outline')}
-                      className={`flex-1 py-3 text-center text-xs font-semibold transition cursor-pointer ${
-                        activeTab === 'outline'
-                          ? 'border-b-2 border-indigo-600 text-indigo-600'
-                          : 'text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      Содержание ({outline.length})
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('security')}
-                      className={`flex-1 py-3 text-center text-xs font-semibold transition cursor-pointer ${
-                        activeTab === 'security'
-                          ? 'border-b-2 border-indigo-600 text-indigo-600'
-                          : 'text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      Безопасность
-                    </button>
-                  </div>
-
-                  {/* Sidebar Body */}
-                  <div className="flex-grow p-5 overflow-y-auto space-y-6">
-                    {activeTab === 'settings' && (
-                      <div className="space-y-6">
-                        {/* Page Setup */}
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">Геометрия страницы</h4>
-                          <div className="space-y-3">
-                            <div>
-                              <label className="text-xxs font-bold text-slate-400 block uppercase mb-1">Ориентация</label>
-                              <div className="grid grid-cols-2 gap-2 bg-slate-50 border border-slate-200/60 p-1 rounded-xl">
-                                <button
-                                  onClick={() => {
-                                    setOrientation('portrait');
-                                    setIsSaved(false);
-                                  }}
-                                  className={`py-1.5 text-xxs font-semibold rounded-lg transition cursor-pointer ${
-                                    orientation === 'portrait' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500'
-                                  }`}
-                                >
-                                  Книжная
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setOrientation('landscape');
-                                    setIsSaved(false);
-                                  }}
-                                  className={`py-1.5 text-xxs font-semibold rounded-lg transition cursor-pointer ${
-                                    orientation === 'landscape' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500'
-                                  }`}
-                                >
-                                  Альбомная
-                                </button>
-                              </div>
-                            </div>
-
-                            <div>
-                              <label className="text-xxs font-bold text-slate-400 block uppercase mb-1">Размер полей</label>
-                              <div className="grid grid-cols-3 gap-2 bg-slate-50 border border-slate-200/60 p-1 rounded-xl">
-                                {([['normal', 'Обычные'], ['narrow', 'Узкие'], ['wide', 'Широкие']] as const).map(([size, label]) => (
-                                  <button
-                                    key={size}
-                                    onClick={() => setMarginSize(size)}
-                                    className={`py-1.5 text-xxs font-semibold rounded-lg transition cursor-pointer ${
-                                      marginSize === size ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500'
-                                    }`}
-                                  >
-                                    {label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="flex justify-between items-center">
-                              <span className="text-xxs text-slate-500 font-medium">Показывать разметку линейки</span>
-                              <input
-                                type="checkbox"
-                                checked={showRuler}
-                                onChange={e => setShowRuler(e.target.checked)}
-                                className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Formatting Summary */}
-                        <div className="p-4 bg-slate-50 border border-slate-200/40 rounded-2xl">
-                          <h4 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1">
-                            <BarChart2 className="w-4 h-4 text-indigo-500" />
-                            Статистика текста
-                          </h4>
-                          <div className="grid grid-cols-2 gap-3 text-slate-600 mt-3">
-                            <div className="bg-white p-2.5 border border-slate-200/60 rounded-xl">
-                              <p className="text-[10px] text-slate-400 font-semibold uppercase">Слов</p>
-                              <p className="text-lg font-bold text-slate-800">{wordCount}</p>
-                            </div>
-                            <div className="bg-white p-2.5 border border-slate-200/60 rounded-xl">
-                              <p className="text-[10px] text-slate-400 font-semibold uppercase">Знаков</p>
-                              <p className="text-lg font-bold text-slate-800">{charCount}</p>
-                            </div>
-                            <div className="bg-white p-2.5 border border-slate-200/60 rounded-xl">
-                              <p className="text-[10px] text-slate-400 font-semibold uppercase">Абзацев</p>
-                              <p className="text-lg font-bold text-slate-800">{paragraphCount}</p>
-                            </div>
-                            <div className="bg-white p-2.5 border border-slate-200/60 rounded-xl flex flex-col justify-center">
-                              <p className="text-[10px] text-slate-400 font-semibold uppercase">Время чтения</p>
-                              <p className="text-xs font-bold text-slate-800 flex items-center gap-1 mt-1">
-                                <Clock className="w-3.5 h-3.5 text-slate-400" />
-                                ~{Math.ceil(wordCount / 180)} мин
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* File Export Tools */}
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">Скачать и экспортировать</h4>
-                          <div className="space-y-2">
-                            <button
-                              id="btn-export-pdf"
-                              onClick={handlePrint}
-                              className="w-full flex items-center justify-between p-2.5 hover:bg-slate-50 border border-slate-200/60 rounded-xl text-left text-slate-700 text-xs transition font-semibold cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2">
-                                <Printer className="w-4 h-4 text-slate-400" />
-                                Печать / Сохранить в PDF
-                              </span>
-                              <ChevronRight className="w-4 h-4 text-slate-400" />
-                            </button>
-                            <button
-                              id="btn-export-md"
-                              onClick={handleExportMarkdown}
-                              className="w-full flex items-center justify-between p-2.5 hover:bg-slate-50 border border-slate-200/60 rounded-xl text-left text-slate-700 text-xs transition font-semibold cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2">
-                                <Sparkles className="w-4 h-4 text-slate-400" />
-                                Экспорт в Markdown (.md)
-                              </span>
-                              <ChevronRight className="w-4 h-4 text-slate-400" />
-                            </button>
-                            <button
-                              id="btn-export-html"
-                              onClick={handleExportHTML}
-                              className="w-full flex items-center justify-between p-2.5 hover:bg-slate-50 border border-slate-200/60 rounded-xl text-left text-slate-700 text-xs transition font-semibold cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2">
-                                <FileText className="w-4 h-4 text-slate-400" />
-                                Веб-страница HTML (.html)
-                              </span>
-                              <ChevronRight className="w-4 h-4 text-slate-400" />
-                            </button>
-                            <button
-                              id="btn-export-txt"
-                              onClick={handleExportText}
-                              className="w-full flex items-center justify-between p-2.5 hover:bg-slate-50 border border-slate-200/60 rounded-xl text-left text-slate-700 text-xs transition font-semibold cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2">
-                                <BookOpen className="w-4 h-4 text-slate-400" />
-                                Обычный текст (.txt)
-                              </span>
-                              <ChevronRight className="w-4 h-4 text-slate-400" />
-                            </button>
-                            <button
-                              id="btn-export-json"
-                              onClick={handleExportJSON}
-                              className="w-full flex items-center justify-between p-2.5 hover:bg-slate-50 border border-slate-200/60 rounded-xl text-left text-slate-700 text-xs transition font-semibold cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2">
-                                <Layers className="w-4 h-4 text-slate-400" />
-                                Резервная копия JSON (.json)
-                              </span>
-                              <ChevronRight className="w-4 h-4 text-slate-400" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Create Template option */}
-                        <div className="pt-2">
-                          <button
-                            id="btn-save-as-template"
-                            onClick={handleSaveAsTemplate}
-                            className="w-full py-2.5 border border-indigo-200/80 bg-indigo-50/40 hover:bg-indigo-50 text-indigo-700 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <LayoutGrid className="w-4 h-4" />
-                            Сохранить как шаблон
-                          </button>
-                        </div>
-
-                        {/* Delete document button */}
-                        <div className="pt-4 border-t border-slate-100">
-                          <button
-                            onClick={() => {
-                              if (confirm('Вы абсолютно уверены, что хотите навсегда удалить этот документ? Это действие невозможно отменить!')) {
-                                onDelete(doc.id);
-                              }
-                            }}
-                            className="w-full py-2.5 hover:bg-red-50 hover:text-red-600 text-slate-500 border border-transparent hover:border-red-200/50 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            Удалить этот документ
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {activeTab === 'outline' && (
-                      <div className="space-y-4">
-                        <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">Структура документа</h4>
-                        {outline.length === 0 ? (
-                          <div className="text-center py-8 text-slate-400 text-xs">
-                            <BookOpen className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                            Заголовки не найдены.<br />Создайте заголовки H1-H4 на панели форматирования для построения содержания.
-                          </div>
-                        ) : (
-                          <div className="space-y-1.5 max-h-[450px] overflow-y-auto pr-1">
-                            {outline.map((item, idx) => (
-                              <button
-                                key={`${item.id}-${idx}`}
-                                onClick={() => handleScrollToHeader(item.id)}
-                                className="w-full text-left py-1.5 px-2 hover:bg-slate-50 rounded-lg transition text-xs font-medium text-slate-600 hover:text-indigo-600 flex items-start gap-1 cursor-pointer"
-                                style={{ paddingLeft: `${(item.level - 1) * 12 + 8}px` }}
-                              >
-                                <span className="text-[10px] text-slate-400 select-none">#</span>
-                                <span className="truncate">{item.text}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {activeTab === 'security' && (
-                      <div className="space-y-6">
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">Защита PIN-кодом</h4>
-                          <p className="text-slate-500 text-xxs leading-relaxed mb-4">
-                            Установите уникальный 4-значный PIN-код на этот конкретный документ, чтобы защитить его отдельно от главного мастер-пароля. Это поможет уберечь личные записи от посторонних глаз!
-                          </p>
-                          
-                          <form onSubmit={handleTogglePinLock} className="space-y-3 bg-slate-50 border border-slate-200/60 p-4 rounded-2xl">
-                            <div className="flex justify-between items-center">
-                              <span className="text-xs font-semibold text-slate-700">Статус защиты</span>
-                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
-                                pinLockEnabled ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                              }`}>
-                                {pinLockEnabled ? 'Защищен' : 'Открыт'}
-                              </span>
-                            </div>
-
-                            <div className="space-y-1">
-                              <label className="text-xxs font-bold text-slate-400 uppercase tracking-wide block">
-                                {pinLockEnabled ? 'Введите текущий PIN для отключения' : 'Придумайте 4-значный PIN-код'}
-                              </label>
-                              <input
-                                id="doc-pin-security-input"
-                                type="password"
-                                maxLength={4}
-                                value={pin}
-                                onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
-                                placeholder="••••"
-                                className="w-24 text-center text-sm font-bold tracking-widest py-1.5 bg-white border border-slate-200 focus:border-indigo-500 rounded-lg focus:outline-none"
-                              />
-                            </div>
-
-                            {pinError && (
-                              <div className="text-xxs text-red-500 font-semibold">{pinError}</div>
-                            )}
-
-                            <button
-                              id="doc-pin-security-submit"
-                              type="submit"
-                              className={`w-full py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
-                                pinLockEnabled
-                                  ? 'bg-red-600 hover:bg-red-500 text-white'
-                                  : 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                              }`}
-                            >
-                              {pinLockEnabled ? 'Отключить защиту' : 'Включить защиту'}
-                            </button>
-                          </form>
-                        </div>
-
-                        <div className="p-3 bg-yellow-50 border border-yellow-200/50 text-yellow-800 text-xxs rounded-xl flex gap-2">
-                          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                          <span>Внимание: PIN-коды документов хранятся в зашифрованном виде на вашем устройстве. Запишите PIN-код; его невозможно восстановить в случае утери!</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+              {/* Action Buttons */}
+              <div className="flex gap-3 mt-6 pt-3 border-t border-slate-100 dark:border-slate-700/50">
+                <button
+                  onClick={() => setShowListBuilderModal(false)}
+                  className="flex-1 py-3 text-slate-500 dark:text-slate-400 font-bold text-sm bg-slate-50 dark:bg-slate-900/30 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-xl transition cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  onClick={handleInsertChecklistFromModal}
+                  className="flex-1 py-3 text-white font-bold text-sm bg-blue-500 hover:bg-blue-600 rounded-xl transition shadow-md shadow-blue-500/15 cursor-pointer"
+                >
+                  Вставить в текст
+                </button>
+              </div>
+            </motion.div>
           </div>
-        </>
-      )}
+        )}
+      </AnimatePresence>
 
-      {/* Styled media print definitions specifically for high-craft PDF output */}
-      <style>{`
-        @media print {
-          body, html {
-            background-color: white !important;
-            color: black !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-          #rich-editor-wrapper {
-            background-color: white !important;
-            min-height: auto !important;
-            display: block !important;
-          }
-          #rich-editor-canvas {
-            min-height: auto !important;
-            border: none !important;
-            padding: 0 !important;
-            margin: 0 !important;
-          }
-          .print\\:hidden, #rich-editor-wrapper > *:not(.overflow-y-auto), #rich-editor-wrapper .flex-grow > div:not(.overflow-y-auto) {
-            display: none !important;
-          }
-          .overflow-y-auto {
-            overflow: visible !important;
-            padding: 0 !important;
-            display: block !important;
-          }
-          .bg-white.shadow-xl {
-            box-shadow: none !important;
-            border: none !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            width: 100% !important;
-            min-height: auto !important;
-          }
-        }
-      `}</style>
+      {/* Hidden Print Area */}
+      <div id="print-area" className="hidden print:block">
+        <h1>{doc.title || 'Untitled'}</h1>
+        <div dangerouslySetInnerHTML={{ __html: doc.content }} />
+      </div>
     </div>
   );
 }

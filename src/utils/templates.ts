@@ -218,5 +218,36 @@ export const BUILT_IN_TEMPLATES: DocTemplate[] = [
         <p style="text-indent: 2rem; margin-bottom: 1.5rem;">Она замерла, дыхание перехватило в горле. Пламя свечи дрогнуло, отбрасывая длинные ломаные тени на потолок. Это был голос библиотекаря, она не сомневалась в этом. Но библиотекарь бесследно исчез во время весеннего равноденствия, ровно сорок дней назад.</p>
       </div>
     `
+  },
+  {
+    id: 'tpl-checklist',
+    name: 'Новый список',
+    description: 'Создайте список задач, покупок или дел с интерактивными флажками.',
+    category: 'General',
+    fontFamily: 'Inter',
+    fontSize: '16px',
+    content: `
+      <div style="font-family: Inter, -apple-system, sans-serif; line-height: 1.6; color: #1e293b;">
+        <h2>Мой список задач</h2>
+        <p style="color: #64748b; font-size: 0.9rem; margin-bottom: 1.5rem;">Нажмите на квадрат, чтобы отметить задачу как выполненную.</p>
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+          <input type="checkbox" style="width: 18px; height: 18px; accent-color: #3b82f6; cursor: pointer;">
+          <span style="font-size: 1.05rem;">Купить продукты на неделю</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+          <input type="checkbox" style="width: 18px; height: 18px; accent-color: #3b82f6; cursor: pointer;">
+          <span style="font-size: 1.05rem;">Закончить оформление документа</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+          <input type="checkbox" style="width: 18px; height: 18px; accent-color: #3b82f6; cursor: pointer;">
+          <span style="font-size: 1.05rem;">Сделать зарядку вечером</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+          <input type="checkbox" style="width: 18px; height: 18px; accent-color: #3b82f6; cursor: pointer;">
+          <span style="font-size: 1.05rem;">Позвонить близким</span>
+        </div>
+        <div><br></div>
+      </div>
+    `
   }
 ];

@@ -25,6 +25,7 @@ export interface UserSettings {
   autoLockMinutes: number; // 0 for disabled, or 1, 5, 10, 15, 30
   theme: 'light' | 'dark' | 'sepia' | 'slate';
   fontPreference: string;
+  language: 'ru' | 'en';
 }
 
 export interface EncryptedData {
